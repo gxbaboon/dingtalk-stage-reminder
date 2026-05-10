@@ -6,7 +6,16 @@ on:
     - cron: '30 0 * * *'
     # 北京时间 17:50 → UTC 09:50
     - cron: '50 9 * * *'
-  workflow_dispatch:  # 支持手动触发测试
+  workflow_dispatch:
+    inputs:
+      type:
+        description: '提醒类型'
+        required: true
+        default: 'morning'
+        type: choice
+        options:
+          - morning
+          - evening
 
 jobs:
   remind:
@@ -20,17 +29,27 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: 判断触发类型并推送
+      - name: 执行推送
         env:
           TZ: Asia/Shanghai
+          TYPE: ${{ github.event.inputs.type }}
         run: |
-          HOUR=$(date +%H)
-          if [ "$HOUR" = "08" ]; then
-            echo "→ 执行 08:30 巡检提醒"
-            python send_reminder.py
-          elif [ "$HOUR" = "17" ]; then
-            echo "→ 执行 17:50 演出前提醒"
-            TYPE=evening python send_reminder.py
+          if [ -z "$TYPE" ]; then
+            HOUR=$(date +%H)
+            if [ "$HOUR" = "08" ]; then
+              echo "→ 定时触发：执行 08:30 巡检提醒"
+              python send_reminder.py
+            elif [ "$HOUR" = "17" ]; then
+              echo "→ 定时触发：执行 17:50 演出前提醒"
+              TYPE=evening python send_reminder.py
+            else
+              echo "非计划时间，跳过"
+            fi
           else
-            echo "非计划时间，跳过"
+            echo "→ 手动触发：类型 = $TYPE"
+            if [ "$TYPE" = "evening" ]; then
+              TYPE=evening python send_reminder.py
+            else
+              python send_reminder.py
+            fi
           fi
