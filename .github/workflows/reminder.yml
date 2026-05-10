@@ -1,0 +1,36 @@
+name: 巡检提醒定时任务
+
+on:
+  schedule:
+    # 北京时间 08:30 → UTC 00:30
+    - cron: '30 0 * * *'
+    # 北京时间 17:50 → UTC 09:50
+    - cron: '50 9 * * *'
+  workflow_dispatch:  # 支持手动触发测试
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 判断触发类型并推送
+        env:
+          TZ: Asia/Shanghai
+        run: |
+          HOUR=$(date +%H)
+          if [ "$HOUR" = "08" ]; then
+            echo "→ 执行 08:30 巡检提醒"
+            python send_reminder.py
+          elif [ "$HOUR" = "17" ]; then
+            echo "→ 执行 17:50 演出前提醒"
+            TYPE=evening python send_reminder.py
+          else
+            echo "非计划时间，跳过"
+          fi
