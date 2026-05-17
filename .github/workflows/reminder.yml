@@ -2,10 +2,10 @@ name: 巡检提醒定时任务
 
 on:
   schedule:
-    # 北京时间 08:30 → UTC 00:30
-    - cron: '30 0 * * *'
-    # 北京时间 17:50 → UTC 09:50
-    - cron: '50 9 * * *'
+    # 北京时间 06:00 → UTC 22:00（提前触发，补偿GitHub延迟约2-3小时）
+    - cron: '0 22 * * *'
+    # 北京时间 14:00 → UTC 06:00（提前触发，补偿GitHub延迟约3-4小时）
+    - cron: '0 6 * * *'
   workflow_dispatch:
     inputs:
       type:
@@ -19,27 +19,27 @@ on:
 
 jobs:
   morning:
-    if: github.event.schedule == '30 0 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.type == 'morning')
+    if: github.event.schedule == '0 22 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.type == 'morning')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: 执行 08:30 巡检提醒
+      - name: 执行巡检提醒
         env:
           TZ: Asia/Shanghai
         run: python send_reminder.py
 
   evening:
-    if: github.event.schedule == '50 9 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.type == 'evening')
+    if: github.event.schedule == '0 6 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.type == 'evening')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: 执行 17:50 演出前提醒
+      - name: 执行演出前提醒
         env:
           TZ: Asia/Shanghai
         run: TYPE=evening python send_reminder.py
