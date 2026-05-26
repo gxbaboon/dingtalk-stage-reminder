@@ -3,9 +3,9 @@ name: 巡检提醒定时任务
 on:
   schedule:
     # 北京时间 06:00 → UTC 22:00（提前触发，补偿GitHub延迟约2-3小时）
-    - cron: '0 22 * * *'
+    - cron: '30 0 * * *'
     # 北京时间 14:00 → UTC 06:00（提前触发，补偿GitHub延迟约3-4小时）
-    - cron: '0 6 * * *'
+    - cron: '50 9 * * *'
   workflow_dispatch:
     inputs:
       type:
