@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-钉钉巡检提醒推送脚本 v2
+钉钉巡检提醒推送脚本
 - 读取 schedule.json 判断今日是否有演出
-- TYPE=morning → 08:30 巡检提醒（有演出每日发，无演出每3天发）
+- TYPE=morning  → 08:30 巡检提醒（有演出每日发，无演出每3天发）
 - TYPE=evening → 17:50 演出前提醒（仅演出日发送）
-- memory.log 由 workflow 步骤自动 commit push 回仓库
 """
 
-import os, json, sys, urllib.request
+import os
+import json
+import sys
+import subprocess
 from datetime import datetime, timedelta
 
 WEBHOOK = "https://oapi.dingtalk.com/robot/send?access_token=5426a81fa24bcbe3bfa8f9c595932eb3539fff90adf38a1c61cd01d371d8477a"
@@ -16,17 +18,14 @@ SCHEDULE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedu
 MEMORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory.log")
 
 
-def send_dingtalk(content):
-    """发送钉钉消息"""
-    payload = json.dumps({
-        "msgtype": "markdown",
-        "markdown": {"title": "技术部巡检提醒", "text": content}
-    }).encode("utf-8")
-    req = urllib.request.Request(WEBHOOK, data=payload,
-                                 headers={"Content-Type": "application/json"})
+def send_dingtalk(msg_type, content):
+    import urllib.request
+    import json as j
+    payload = j.dumps({"msgtype": msg_type, "markdown": {"title": "技术部巡检提醒", "text": content}}).encode("utf-8")
+    req = urllib.request.Request(WEBHOOK, data=payload, headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
+            result = j.loads(resp.read().decode("utf-8"))
             print(f"  钉钉响应: {result}")
             return result.get("errcode") == 0
     except Exception as e:
@@ -35,60 +34,45 @@ def send_dingtalk(content):
 
 
 def get_today_schedule():
-    """读取今日是否为演出日"""
+    """返回 (is_show_day: bool, show_name: str)"""
     today = datetime.now().strftime("%Y-%m-%d")
     try:
         with open(SCHEDULE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        is_show = data.get("schedule", {}).get(today, False)
-        print(f"  日程查询: {today} -> {'演出日' if is_show else '无演出'}")
-        return is_show
+        val = data.get("schedule", {}).get(today, False)
+        if val and isinstance(val, str):
+            return True, val
+        return bool(val), ""
     except Exception as e:
         print(f"  读取日程失败: {e}")
-        return False
+        return False, ""
 
 
 def read_memory():
     """读取上次推送日期"""
     try:
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            print(f"  上次推送: {content or '(空/首次)'}")
-            return content
+            return f.read().strip()
     except FileNotFoundError:
-        print(f"  上次推送: (空/首次)")
         return ""
 
 
 def write_memory(date_str):
-    """记录本次推送日期到 memory.log（由 workflow 自动 commit push）"""
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
         f.write(date_str)
-    print(f"  已记录日期: {date_str}")
 
 
-def should_send_regular_check():
-    """无演出时判断距上次发送是否满3天"""
-    last = read_memory()
-    if not last:
-        return True
-    try:
-        last_date = datetime.strptime(last, "%Y-%m-%d")
-        days_since = (datetime.now() - last_date).days
-        print(f"  距上次推送: {days_since} 天 (阈值3天) => {'发送' if days_since >= 3 else '跳过'}")
-        return days_since >= 3
-    except Exception as e:
-        print(f"  日期解析异常: {e}, 默认发送")
-        return True
-
-
-def build_morning_message(is_show_day):
+def build_morning_message(is_show_day, show_name=""):
+    """构建 08:30 巡检清单"""
     today = datetime.now().strftime("%Y-%m-%d")
-    label = "🎭 演出日巡检" if is_show_day else "📋 定期巡检"
-    return f"""## {label}
+    type_label = "演出日巡检" if is_show_day else "定期巡检"
+
+    show_line = f"\n**今日演出：** {show_name}\n" if is_show_day and show_name else ""
+
+    return f"""## 📋 技术部每日巡检清单
 
 **日期：** {today}
-**类型：** {'演出日 - 完整巡检清单' if is_show_day else '非演出日 - 定期巡检（每3天一次）'}
+**类型：** {type_label}{show_line}
 
 ---
 
@@ -128,11 +112,14 @@ def build_morning_message(is_show_day):
 **请各专业人员完成巡检后回复 ✅ 确认**"""
 
 
-def build_evening_message():
+def build_evening_message(show_name=""):
+    """构建 17:50 演出前提醒"""
     today = datetime.now().strftime("%Y-%m-%d")
+
     return f"""## ⏰ 演出前确认提醒
 
-**今日演出日期：** {today}
+**日期：** {today}
+**演出：** {show_name}
 **提醒时间：** 17:50
 
 ---
@@ -158,38 +145,54 @@ def build_evening_message():
 **请各岗位确认完毕后回复 ✅**"""
 
 
+def should_send_regular_check():
+    """无演出时，判断距上次发送是否满3天"""
+    last_date_str = read_memory()
+    if not last_date_str:
+        return True
+    try:
+        last_date = datetime.strptime(last_date_str, "%Y-%m-%d")
+        today = datetime.now()
+        return (today - last_date).days >= 3
+    except Exception:
+        return True
+
+
 def main():
     msg_type = os.environ.get("TYPE", "morning")
     today = datetime.now().strftime("%Y-%m-%d")
-    is_show_day = get_today_schedule()
+    is_show_day, show_name = get_today_schedule()
 
-    print(f"[{today}] 类型={msg_type}, 演出日={'✓' if is_show_day else '✗'}")
+    print(f"[{today}] 类型: {msg_type}, 演出日: {is_show_day}, 演出: {show_name}")
 
     if msg_type == "morning":
-        # === 08:30 巡检提醒 ===
+        # 08:30 巡检提醒
         if is_show_day:
-            print("→ 演出日，发送完整巡检清单")
-            ok = send_dingtalk(build_morning_message(True))
+            print("  演出日 → 发送完整巡检清单")
+            content = build_morning_message(True, show_name)
+            ok = send_dingtalk("markdown", content)
             if ok:
                 write_memory(today)
+                print(f"  已记录推送日期: {today}")
         else:
             if should_send_regular_check():
-                print("→ 非演出日，满3天周期，发送定期巡检")
-                ok = send_dingtalk(build_morning_message(False))
+                print("  非演出日，已满3天周期 → 发送定期巡检")
+                content = build_morning_message(False)
+                ok = send_dingtalk("markdown", content)
                 if ok:
                     write_memory(today)
+                    print(f"  已记录推送日期: {today}")
             else:
-                print("→ 非演出日，未满3天，跳过")
+                print("  非演出日，未满3天周期 → 跳过")
 
     elif msg_type == "evening":
-        # === 17:50 演出前提醒（仅演出日）===
+        # 17:50 演出前提醒
         if is_show_day:
-            print("→ 演出日，发送演出前提醒")
-            send_dingtalk(build_evening_message())
+            print("  演出日 → 发送演出前提醒")
+            content = build_evening_message(show_name)
+            send_dingtalk("markdown", content)
         else:
-            print("→ 非演出日，跳过演出前提醒")
-
-    print("=== 执行完毕 ===")
+            print("  非演出日 → 跳过")
 
 
 if __name__ == "__main__":
